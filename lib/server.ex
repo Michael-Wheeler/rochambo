@@ -6,26 +6,25 @@ defmodule Rochambo.Server do
 
   # Client API
   def start_link() do
-    GenServer.start_link(__MODULE__, :ok, name: :rps_server)
+    GenServer.start_link(__MODULE__, :ok, name: {:global, :rps_server})
   end
 
   def join(name) do
-    GenServer.call(:rps_server, {:join, name})
+    GenServer.call({:global, :rps_server}, {:join, name})
   end
 
   def play(shape) do
-    GenServer.cast(:rps_server, {:play, shape, self()})
+    GenServer.cast({:global, :rps_server}, {:play, shape, self()})
     Rochambo.Server.poll_results()
   end
 
   def poll_results() do
     # Wait outside case statement to allow both players a chance to recieve the scores
     Process.sleep(100)
-    result = GenServer.call(:rps_server, :get_game_result)
+    result = GenServer.call({:global, :rps_server}, :get_game_result)
 
     case result == :waiting do
       true ->
-        IO.puts("Waiting for game to be played")
         Rochambo.Server.poll_results()
 
       false ->
@@ -34,29 +33,28 @@ defmodule Rochambo.Server do
   end
 
   def status() do
-    GenServer.call(:rps_server, :status)
+    GenServer.call({:global, :rps_server}, :status)
   end
 
   def get_players() do
-    GenServer.call(:rps_server, :get_players)
+    GenServer.call({:global, :rps_server}, :get_players)
   end
 
   def scores() do
-    GenServer.call(:rps_server, :state)
+    GenServer.call({:global, :rps_server}, :state)
   end
 
   def shapes() do
-    GenServer.call(:rps_server, :shapes)
+    GenServer.call({:global, :rps_server}, :shapes)
   end
 
   def stop() do
-    GenServer.stop(:rps_server, :normal, :infinity)
+    GenServer.stop({:global, :rps_server}, :normal, :infinity)
   end
 
   # GenServer
   @doc false
   def init(:ok) do
-    IO.puts("Game started, please join with your player name")
     names = %{}
     scores = %{}
     shapes = %{}
@@ -71,15 +69,12 @@ defmodule Rochambo.Server do
 
     cond do
       Map.has_key?(names, client_pid) ->
-        IO.puts("You have already joined as #{name}!")
         {:reply, {:error, "Already joined!"}, state}
 
       length(Map.keys(names)) == 2 ->
-        IO.puts("#{name} cannot join as the game is full")
         {:reply, {:error, "Already full!"}, state}
 
       true ->
-        IO.puts("#{name} is joining")
         updated_names = Map.put(names, client_pid, name)
         updated_scores = Map.put(scores, name, 0)
         updated_shapes = Map.put(shapes, client_pid, :empty)
@@ -107,7 +102,6 @@ defmodule Rochambo.Server do
         {:reply, Map.fetch!(result, client_pid), state}
 
       false ->
-        IO.puts("Game is yet to be played")
         {:reply, :waiting, state}
     end
   end
@@ -133,28 +127,7 @@ defmodule Rochambo.Server do
   def handle_cast({:play, shape, client_pid}, state) do
     {names, scores, shapes, result} = state
 
-    # Can't play until both players have joined
-    case length(Map.keys(names)) != 2 do
-      true ->
-        {:noreply, state}
-
-      false ->
-        nil
-    end
-
-    # Start new round if existing shapes found
-    updated_shapes =
-      case Map.get(shapes, client_pid) != :empty do
-        true ->
-          [player1, player2] = Map.keys(shapes)
-          updated_shapes = Map.replace!(shapes, player1, :empty)
-          Map.replace!(updated_shapes, player2, :empty)
-
-        false ->
-          shapes
-      end
-
-    updated_shapes = Map.replace!(updated_shapes, client_pid, shape)
+    updated_shapes = Map.replace!(shapes, client_pid, shape)
 
     # Continue to play game if both players have played
     case length(Map.keys(updated_shapes)) == 2 &&
@@ -163,7 +136,14 @@ defmodule Rochambo.Server do
         {_, updated_scores, _, updated_result} =
           Rochambo.Server.play_game({names, scores, updated_shapes, result})
 
-        {:noreply, {names, updated_scores, updated_shapes, updated_result}}
+        # Clear shapes for next round
+        [player1, player2] = Map.keys(shapes)
+
+        cleared_shapes =
+          Map.replace!(updated_shapes, player1, :empty)
+          |> Map.replace!(player2, :empty)
+
+        {:noreply, {names, updated_scores, cleared_shapes, updated_result}}
 
       false ->
         {:noreply, {names, scores, updated_shapes, result}}
@@ -171,9 +151,7 @@ defmodule Rochambo.Server do
   end
 
   @doc false
-  def terminate(_reason, state) do
-    IO.puts("Ending Game.")
-    IO.inspect(state)
+  def terminate(_reason, _state) do
     :ok
   end
 
@@ -187,7 +165,7 @@ defmodule Rochambo.Server do
     player2_name = Map.get(names, player2)
 
     {result, updated_scores} =
-      case Rochambo.play(shapes) do
+      case Rochambo.Server.handle_play(shapes) do
         :draw ->
           {%{player1 => "draw", player2 => "draw"}, scores}
 
@@ -200,7 +178,33 @@ defmodule Rochambo.Server do
            Map.update!(scores, player2_name, fn x -> x + 1 end)}
       end
 
-    IO.puts("Game played, results are: #{inspect(result)}")
     {names, updated_scores, shapes, result}
+  end
+
+  @doc """
+    Takes two shapes and returns the winner
+
+  ## Examples
+
+    iex> Rochambo.Server.handle_play(%{"player1" => :rock, "player2" => :rock})
+    :draw
+
+    iex> Rochambo.Server.handle_play(%{"player1" => :rock, "player2" => :scissors})
+    :player1
+
+    iex> Rochambo.Server.handle_play(%{"player1" => :paper, "player2" => :scissors})
+    :player2
+
+  """
+  def handle_play(shapes) do
+    [shape1, shape2] = Map.values(shapes)
+
+    cond do
+      shape1 == shape2 -> :draw
+      shape1 == :rock && shape2 == :scissors -> :player1
+      shape1 == :paper && shape2 == :rock -> :player1
+      shape1 == :scissors && shape2 == :paper -> :player1
+      true -> :player2
+    end
   end
 end

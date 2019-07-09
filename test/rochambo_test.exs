@@ -1,6 +1,7 @@
 defmodule RochamboTest do
   use ExUnit.Case
   doctest Rochambo
+  doctest Rochambo.Server
   alias Rochambo.Server
 
   test "server" do
