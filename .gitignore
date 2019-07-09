@@ -1,0 +1,6 @@
+_build/
+doc/
+deps/
+.vscode
+.elixir_ls
+.DS_Store
