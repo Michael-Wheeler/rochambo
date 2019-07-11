@@ -14,7 +14,7 @@ defmodule Rochambo.Server do
   end
 
   def play(shape) do
-    GenServer.call({:global, :rps_server}, {:play, shape})
+    GenServer.call({:global, :rps_server}, {:play, shape}, :infinity)
   end
 
   def status() do
