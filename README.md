@@ -1,24 +1,10 @@
 # Rochambo
 
-A GenServer that can play Rock, Paper, Scissors.
+A GenServer to play Rock, Paper, Scissors.
 
-```elixir
-alias Rochambo.Server
-
-def go() do
-  Server.status()
-  # ... :need_players
-
-  Server.join(name)
-  # ... :joined
-
-  Server.play(:rock)
-  # ... "Player X played :scissors! You won!"
-
-  Server.scores() 
-  # ... %{"bob" => 1, "michael" => 0}
-
-  Server.players()
-  # ... ["bob", "michael"]
-end
-```
+To run:
+  - Install Elixir: https://elixir-lang.org/install.html
+  - Check installation with ```elixir --version```
+  - Install dependencies from the project root by running ```mix deps.get```
+  - To run tests: ```mix test```
+  - To create HTML docs: ```mix docs```
