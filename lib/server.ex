@@ -14,22 +14,7 @@ defmodule Rochambo.Server do
   end
 
   def play(shape) do
-    GenServer.cast({:global, :rps_server}, {:play, shape, self()})
-    Rochambo.Server.poll_results()
-  end
-
-  def poll_results() do
-    # Wait outside case statement to allow both players a chance to recieve the scores
-    Process.sleep(100)
-    result = GenServer.call({:global, :rps_server}, :get_game_result)
-
-    case result == :waiting do
-      true ->
-        Rochambo.Server.poll_results()
-
-      false ->
-        result
-    end
+    GenServer.call({:global, :rps_server}, {:play, shape})
   end
 
   def status() do
@@ -64,7 +49,7 @@ defmodule Rochambo.Server do
 
   @doc false
   def handle_call({:join, name}, from, state) do
-    {names, scores, shapes, result} = state
+    {names, scores, shapes, _} = state
     {client_pid, _} = from
 
     cond do
@@ -78,7 +63,8 @@ defmodule Rochambo.Server do
         updated_names = Map.put(names, client_pid, name)
         updated_scores = Map.put(scores, name, 0)
         updated_shapes = Map.put(shapes, client_pid, :empty)
-        {:reply, :joined, {updated_names, updated_scores, updated_shapes, result}}
+        updated_result = Map.put(shapes, client_pid, :empty)
+        {:reply, :joined, {updated_names, updated_scores, updated_shapes, updated_result}}
     end
   end
 
@@ -93,13 +79,13 @@ defmodule Rochambo.Server do
   end
 
   @doc false
-  def handle_call(:get_game_result, from, state) do
-    {_, _, _, result} = state
-    {client_pid, _} = from
+  def handle_call({:get_game_result, client_pid}, _from, state) do
+    {names, scores, shapes, result} = state
 
-    case result != %{} do
+    case Map.fetch!(result, client_pid) != :empty do
       true ->
-        {:reply, Map.fetch!(result, client_pid), state}
+        updated_result = Map.replace!(result, client_pid, :empty)
+        {:reply, Map.fetch!(result, client_pid), {names, scores, shapes, updated_result}}
 
       false ->
         {:reply, :waiting, state}
@@ -124,30 +110,38 @@ defmodule Rochambo.Server do
   end
 
   @doc false
-  def handle_cast({:play, shape, client_pid}, state) do
+  def handle_call({:play, shape}, from, state) do
     {names, scores, shapes, result} = state
+    {client_pid, _} = from
 
     updated_shapes = Map.replace!(shapes, client_pid, shape)
 
     # Continue to play game if both players have played
-    case length(Map.keys(updated_shapes)) == 2 &&
-           !Enum.member?(Map.values(updated_shapes), :empty) do
-      true ->
-        {_, updated_scores, _, updated_result} =
-          Rochambo.Server.play_game({names, scores, updated_shapes, result})
+    updated_state =
+      case length(Map.keys(updated_shapes)) == 2 &&
+             !Enum.member?(Map.values(updated_shapes), :empty) do
+        true ->
+          {_, updated_scores, _, updated_result} =
+            Rochambo.Server.play_game({names, scores, updated_shapes, result})
 
-        # Clear shapes for next round
-        [player1, player2] = Map.keys(shapes)
+          # Clear shapes for next round
+          [player1, player2] = Map.keys(shapes)
 
-        cleared_shapes =
-          Map.replace!(updated_shapes, player1, :empty)
-          |> Map.replace!(player2, :empty)
+          cleared_shapes =
+            Map.replace!(updated_shapes, player1, :empty)
+            |> Map.replace!(player2, :empty)
 
-        {:noreply, {names, updated_scores, cleared_shapes, updated_result}}
+          {names, updated_scores, cleared_shapes, updated_result}
 
-      false ->
-        {:noreply, {names, scores, updated_shapes, result}}
-    end
+        false ->
+          {names, scores, updated_shapes, result}
+      end
+
+    spawn_link(fn ->
+      poll_server_results(from)
+    end)
+
+    {:noreply, updated_state}
   end
 
   @doc false
@@ -205,6 +199,20 @@ defmodule Rochambo.Server do
       shape1 == :paper && shape2 == :rock -> :player1
       shape1 == :scissors && shape2 == :paper -> :player1
       true -> :player2
+    end
+  end
+
+  def poll_server_results(from) do
+    {client_pid, _} = from
+    result = GenServer.call({:global, :rps_server}, {:get_game_result, client_pid})
+
+    case result == :waiting do
+      true ->
+        Process.sleep(100)
+        Rochambo.Server.poll_server_results(from)
+
+      false ->
+        GenServer.reply(from, result)
     end
   end
 end

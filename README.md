@@ -8,5 +8,3 @@ To run:
   - Install dependencies from the project root by running ```mix deps.get```
   - To run tests: ```mix test```
   - To create HTML docs: ```mix docs```
-  
-  
